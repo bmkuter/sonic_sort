@@ -53,22 +53,23 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define MINVAL   0.0
 #define MAXVAL  10.0
 
-typedef float data_t;
+typedef int data_t;
 
 /* Prototypes */
-void printArray(float *array, int rowlen);
-void initializeArray1D(float *arr, int len, int seed);
-void sort(float *arrayA, float *arrayB,float *arrayC,long int rowlen);
-__global__ void sonic_sort(float *arrayA, float *arrayB,float *arrayC,long int rowlen);
-__global__ void mega_merge(float *arrayA, float *arrayB,float *arrayC,long int rowlen);
-double fRand(double fMin, double fMax);
+void printArray(data_t *array, int rowlen);
+void initializeArray1D(data_t *arr, int len, int seed);
+void sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
+__global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
+__global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
+__device__ void binary_search(data_t *array, int L, int R, int X);
+data_t fRand(data_t fMin, data_t fMax);
 
 /* Prototypes */
-void printArray(float *array, int rowlen);
+void printArray(data_t *array, int rowlen);
 
 int clock_gettime(clockid_t clk_id, struct timespec *tp);
 
-double interval(struct timespec start, struct timespec end)
+data_t interval(struct timespec start, struct timespec end)
 {
   struct timespec temp;
   temp.tv_sec = end.tv_sec - start.tv_sec;
@@ -77,16 +78,16 @@ double interval(struct timespec start, struct timespec end)
     temp.tv_sec = temp.tv_sec - 1;
     temp.tv_nsec = temp.tv_nsec + 1000000000;
   }
-  return (((double)temp.tv_sec) + ((double)temp.tv_nsec)*1.0e-9);
+  return (((data_t)temp.tv_sec) + ((data_t)temp.tv_nsec)*1.0e-9);
 }
 
 /* This routine "wastes" a little time to make sure the machine gets
    out of power-saving mode (800 MHz) and switches to normal speed. */
-double wakeup_delay()
+data_t wakeup_delay()
 {
-  double meas = 0; int i, j;
+  data_t meas = 0; int i, j;
   struct timespec time_start, time_stop;
-  double quasi_random = 0;
+  data_t quasi_random = 0;
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
   j = 100;
   while (meas < 1.0) {
@@ -125,25 +126,25 @@ int main(int argc, char **argv){
   float elapsed_gpu;
 
   // Arrays on GPU global memory
-  float *d_arrayA;
-  float *d_arrayB;
-  float *d_arrayC;
+  data_t *d_arrayA;
+  data_t *d_arrayB;
+  data_t *d_arrayC;
 
   // Arrays on the host memory
-  float *h_arrayA;
-  float *h_arrayB;
-  float *h_arrayC;
-  float *h_arrayC_gold;
+  data_t *h_arrayA;
+  data_t *h_arrayB;
+  data_t *h_arrayC;
+  data_t *h_arrayC_gold;
 
   int errCount = 0, zeroCount = 0;
 
-  size_t allocSize = arrLen*sizeof(float);
+  size_t allocSize = arrLen*sizeof(data_t);
   
   // Allocate arrays on host memory
-  h_arrayA                   = (float *) malloc(allocSize);
-  h_arrayB                   = (float *) malloc(allocSize);
-  h_arrayC                   = (float *) calloc(arrLen,sizeof(float));    //Output for Device
-  h_arrayC_gold              = (float *) calloc(arrLen,sizeof(float));    //Validation array
+  h_arrayA                   = (data_t *) malloc(allocSize);
+  h_arrayB                   = (data_t *) malloc(allocSize);
+  h_arrayC                   = (data_t *) calloc(arrLen,sizeof(data_t));    //Output for Device
+  h_arrayC_gold              = (data_t *) calloc(arrLen,sizeof(data_t));    //Validation array
   
   if (!h_arrayA) {
       free((void *) h_arrayA);
@@ -183,7 +184,7 @@ int main(int argc, char **argv){
   // Record event on the default stream
   cudaEventRecord(start, 0);
 #endif
-  for (i = 0; i < THRESHOLD; i++)
+  for (int i = 0; i < THRESHOLD; i++)
   {
        sonic_sort<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
        mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
@@ -216,7 +217,7 @@ int main(int argc, char **argv){
   
   wakeup_delay();
    printf("Host Launch\n");
-  double time_stamp;
+  data_t time_stamp;
   clock_gettime(CLOCK_REALTIME, &time_start);
     sort(h_arrayA,h_arrayB,h_arrayC_gold,arrLen);
   clock_gettime(CLOCK_REALTIME, &time_stop);
@@ -228,16 +229,6 @@ int main(int argc, char **argv){
 
 printf("Compare\n");
   // Compare the results
-  for(int i = 0; i < arrLen; i++) {
-      for(int j = 0; j < arrLen; j++) {    //FIX TOLERANCE??
-        if (abs(h_arrayC_gold[i*arrLen+j] - h_arrayC[i*arrLen+j])/((h_arrayC_gold[i*arrLen+j] + h_arrayC[i*arrLen+j])*.5) > COMPARE_TOL) {
-          errCount++;
-        }
-        if (h_arrayC[i*arrLen+j] == 0) {
-          zeroCount++;
-        }
-      }
-  }
 
   if (errCount > 0) {
     printf("\n@ERROR: TEST FAILED: %d results did not match\n", errCount);
@@ -270,45 +261,67 @@ printf("Compare\n");
 
 /************************************/
 
-void sort(float *arrayA, float *arrayB, float *arrayC, long int rowlen)
+void sort(data_t *arrayA, data_t *arrayB, data_t *arrayC, long int rowlen)
 {
-
+  
 }
 
 
-__global__ void sonic_sort(float *arrayA, float *arrayB,float *arrayC,long int rowlen) 
+__global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen) 
+{
+   
+}
+
+__global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen) 
 {
  
 }
 
-__global__ void mega_merge(float *arrayA, float *arrayB,float *arrayC,long int rowlen) 
+__device__ void binary_search(data_t *array, int L, int R, int X)
 {
- 
-}
-
-void initializeArray1D(float *arr, int len, int seed) {
-  long int i;
-  srand(seed);
-  double fRand(double fMin, double fMax);
-
-  for (i = 0; i < len; i++) 
+  while(L <=  R)
   {
-    arr[i] = (fRand((double)(MINVAL),(double)(MAXVAL)));  
+    int M = L + (R-1)/2;
+    
+    if (array[M] == X)
+    {
+      return (M);
+    }
+    if (array[M]M < X)
+    {
+      M++;
+      if (array[M+1] > X) return M;
+    }
+    else  /* array[M]>X */
+    {
+      M--;
+    }
   }
 }
 
-void printArray(float *array, int rowlen)
+void initializeArray1D(data_t *arr, int len, int seed) {
+  long int i;
+  srand(seed);
+  data_t fRand(data_t fMin, data_t fMax);
+
+  for (i = 0; i < len; i++) 
+  {
+    arr[i] = (fRand((data_t)(MINVAL),(data_t)(MAXVAL)));  
+  }
+}
+
+void printArray(data_t *array, int rowlen)
 {
   int i;
   for (i=0; i < rowlen; i++)
   {
     printf("%-5.3f   ", array[i]);
   }
-
+ 
 }
 
-double fRand(double fMin, double fMax)
+data_t fRand(data_t fMin, data_t fMax)
 {
-  double f = (double)random() / RAND_MAX;
+  data_t f = (data_t)random() / RAND_MAX;
   return fMin + f * (fMax - fMin);
 }
