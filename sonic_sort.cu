@@ -351,14 +351,24 @@ __device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, 
     }
     else  /* If I'm smaller than center */
     {
-
+      /* Look Left and compare */
+      /* If we're bigger than left and less than center, we return our current place, as it gives how many elements are smaller than us. */
+      if (array[M-1] < X) return M;
+      /* If left is the same as us, we need to check thread_id to see who goes first */
+      else if (array[M-1] = X)
+      {
+        /* We check if our threadID is less, indicating we go first. So we bin_hop left, as we don't care about right. */
+        if(thread_id < array_len) R = M - 1;
+        /* Otherwise we can return M, since center is larger than us. */
+        else return M;
+      }
     }
   }
   
   /* Need flag to indicate if we're bigger or smaller than everything in the other list */
   
-  if(bigger) return array_len; /* We're bigger, so we return array length, since we're larger than every element in the other array. */
-  else if (smaller) return 0; /* We're smaller, so we return 0 because there are no elements in the other array smaller than us. */
+  if(X > array[array_len - 1]) return array_len; /* We're bigger, so we return array length, since we're larger than every element in the other array. */
+  else if (X < array[0]) return 0; /* We're smaller, so we return 0 because there are no elements in the other array smaller than us. */
   else return -1; /*Error condition */
   
 }
