@@ -50,8 +50,8 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define NUM_TESTS 1
 #define OPTIONS 1
 
-#define MINVAL   0.0
-#define MAXVAL  10.0
+#define MINVAL   0
+#define MAXVAL  10
 
 typedef int data_t;
 
@@ -219,8 +219,8 @@ int main(int argc, char **argv){
     printf("%d ", test[i]);
   }
   printf("\n");
-  int me = 1;
-  int myPlace = binary_search(test, 0, 9, me, 1 /* 0 = left || 1 = right */, 10);
+  int me = 8;
+  int myPlace = binary_search(test, 0, 9, me, 0 /* 0 = left || 1 = right */, 10);
   printf("My value: %d\nHow many values are smaller than me: %d\n\n",me,myPlace);
 
  
@@ -308,12 +308,12 @@ __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
   
   while(L <=  R)
   {
-    int M = L + (R-L)/2;
-    left_value = array[M-1];
+    int M = L + (R-L)/2; /*Division will probably be compiled away, so no need for i>>1 */
+    left_value = (M == (0)) ? (MINVAL-1) : array[M-1];
     center_value = array[M];
-    right_value = array[M+1];
+    right_value = (M == (array_len-1)) ? (MAXVAL+1) : array[M+1];
 
-    printf("\n\nMe: %d\nLeft: %d\nCenter: %d\nRight: %d\n\n",X,left_value,center_value,right_value);
+    printf("\n\nMe: %d\nPosition: %d\nLeft: %d\nCenter: %d\nRight: %d\n\n",X,M,left_value,center_value,right_value);
 
     /* If we are equal to the center value, we have to look at which SIDE we are */
     if(center_value == X)
