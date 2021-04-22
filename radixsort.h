@@ -10,7 +10,7 @@ void radixsort(unsigned int *input_array, int num_elements)
     unsigned int * tmp;
     
     /* base case: if array is empty or its one element then it is sorted. */
-    if (n <= 1) return;
+    if (num_elements <= 1) return;
 
     /* create the output array for count sort */
     unsigned int *array_b = (unsigned int *) calloc(num_elements, sizeof(unsigned int));
