@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <math.h>
 #include <time.h>
+#include "./serial_utilities/sonic_sort.h"
 
 // Assertion to check for errors
 #define CUDA_SAFE_CALL(ans) { gpuAssert((ans), (char *)__FILE__, __LINE__); }
@@ -37,7 +38,7 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define NUM_THREADS   16    //sqr(256) = 16
 #define NUM_BLOCKS         128          //sqr(16) = 4
 #define PRINT_TIME         1
-#define SM_ARR_LEN        10
+#define SM_ARR_LEN        512
 #define COMPARE_TOL         .05
 #define TILE_WIDTH          16
 
@@ -50,10 +51,10 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define NUM_TESTS 1
 #define OPTIONS 1
 
-#define MINVAL   0
-#define MAXVAL  10
+#define MINVAL   1
+#define MAXVAL  20
 
-typedef int data_t;
+typedef unsigned int data_t;
 
 /* Prototypes */
 void printArray(data_t *array, int rowlen);
@@ -63,9 +64,7 @@ __global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
 __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int array_len);
 __device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
 data_t fRand(data_t fMin, data_t fMax);
-
-/* Prototypes */
-void printArray(data_t *array, int rowlen);
+void radixsort(unsigned int *input_array, int num_elements);
 
 int clock_gettime(clockid_t clk_id, struct timespec *tp);
 
@@ -131,8 +130,8 @@ int main(int argc, char **argv){
   data_t *d_arrayC;
 
   // Arrays on the host memory
-  //data_t *h_arrayA;
-  //data_t *h_arrayB;
+  data_t *h_arrayA;
+  data_t *h_arrayB;
   data_t *h_arrayC;
   data_t *h_arrayC_gold;
 
@@ -141,8 +140,8 @@ int main(int argc, char **argv){
   size_t allocSize = arrLen*sizeof(data_t);
   
   // Allocate arrays on host memory
-  //h_arrayA                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
-  //h_arrayB                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
+  h_arrayA                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
+  h_arrayB                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
   h_arrayC                   = (data_t *) calloc(2*arrLen,sizeof(data_t));    //Output for Device
   h_arrayC_gold              = (data_t *) calloc(arrLen,sizeof(data_t));    //Validation array
   
@@ -154,11 +153,24 @@ int main(int argc, char **argv){
   printf("Host Init\n");
   // Initialize the host arrays
   // Arrys are initialized with a known seed for reproducability
-  //initializeArray1D(h_arrayA, arrLen, 123);
-  //initializeArray1D(h_arrayB, arrLen, 351);
+  initializeArray1D(h_arrayA, arrLen, 123);
+  initializeArray1D(h_arrayB, arrLen, 351);
   //initializeArray1D(h_arrayC, arrLen, 12);
-  data_t h_arrayA[SM_ARR_LEN] = {1,1,1,2,3,4,6,7,9,9};
-  data_t h_arrayB[SM_ARR_LEN] = {2,2,3,5,6,7,7,8,9,9};
+  //data_t h_arrayA[SM_ARR_LEN] = {19, 14, 3, 16, 7, 2, 8, 20, 4, 15};
+  //data_t h_arrayB[SM_ARR_LEN] = {8, 11, 10, 4, 7, 1, 17, 20, 5, 14};
+  
+  printf("arrayA: ");
+  printArray(h_arrayA,SM_ARR_LEN);
+  printf ("\n");
+  
+  printf("arrayB: ");
+  printArray(h_arrayB,SM_ARR_LEN);
+  printf ("\n");
+  
+  printf("Serial Sorting. . .\n");
+  
+  radixsort(h_arrayA, SM_ARR_LEN);
+  radixsort(h_arrayB, SM_ARR_LEN);
   
   printf("arrayA: ");
   printArray(h_arrayA,SM_ARR_LEN);
@@ -200,7 +212,7 @@ int main(int argc, char **argv){
   //sonic_sort<<<1, 256>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
   for (int i = 0; i < THRESHOLD; i++)
   {
-       mega_merge<<<1, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
+       mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
        cudaDeviceSynchronize();
   }
   
@@ -324,7 +336,7 @@ __global__ void mega_merge(data_t *left_array, data_t *right_array, data_t *arra
   /* Right Side, so we want to search left array */
   else if (array_side) smaller_than_me = element + binary_search(left_array,0,array_len-1,right_array[element],array_side,array_len);
   
-  cuPrintf("How many smaller than me: %d\n", smaller_than_me);
+  //cuPrintf("How many smaller than me: %d\n", smaller_than_me);
   
   arrayC[smaller_than_me] = (array_side) ? right_array[element] : left_array[element];
   
@@ -437,15 +449,16 @@ __device__ int binary_search(data_t *array, int L, int R, int X, int which_array
   
 }
 
-void initializeArray1D(data_t *arr, int len, int seed) {
+void initializeArray1D(unsigned int *arr, int len, int seed) {
   long int i;
   srand(seed);
-  data_t fRand(data_t fMin, data_t fMax);
+  //data_t fRand(data_t fMin, data_t fMax);
 
   for (i = 0; i < len; i++) 
   {
-    arr[i] = (fRand((data_t)(MINVAL),(data_t)(MAXVAL)));  
+    arr[i] = (rand() % (MAXVAL - MINVAL + 1)) + MINVAL;
   }
+  printf("\n");
 }
 
 void printArray(data_t *array, int rowlen)
@@ -455,11 +468,77 @@ void printArray(data_t *array, int rowlen)
   {
     printf("%d   ", array[i]);
   }
- 
 } 
 
-data_t fRand(data_t fMin, data_t fMax)
+void radixsort(unsigned int *input_array, int num_elements)
 {
-  data_t f = (data_t)random() / RAND_MAX;
-  return fMin + f * (fMax - fMin);
+    int shift, s, i, index;
+    unsigned int * tmp;
+    
+    /* base case: if array is empty or its one element then it is sorted. */
+    if (num_elements <= 1) return;
+
+    /* create the output array for count sort */
+    unsigned int *array_b = (unsigned int *) calloc(num_elements, sizeof(unsigned int));
+   
+   /* initialize array that counts within counting sort*/
+    int *count = (int*) calloc(256, sizeof(unsigned int));
+
+    /* this will allow us to know if we did even number of swaps
+     between input_array pointer and output pointer */
+    unsigned int* original_array = input_array;
+
+    /* if the radix is 256 (total numbers in a 1 byte), then sorting 32-bit numbers will take 4 iteration */
+    for (shift = 0, s = 0; shift < 4; shift++, s+=8)
+    {
+        /* reset the count array */
+        for (i = 0; i < 256; i++)
+        {
+            count[i] = 0;
+        }
+
+        /* counting occurances of a number and incrementing elements in count array */
+        for (i = 0; i < num_elements; i++)
+        {
+            /* access element input, shift right 's' times, then do bit-wise and with value 255 */
+            count[(input_array[i] >> s) &0xff]++;
+        }
+
+        /* do prefix sum so that count[i] indicates where a digit belongs in the output array. */
+        for (i = 1; i < 256; i++)
+        {
+            count[i] += count[i-1];
+        }
+
+        /* build the output array */
+        for (i = num_elements-1; i >= 0; i--)
+        {
+            index = (input_array[i] >> s) &0xff;
+
+            /* decrement element within count array to figure out input_array[i]'s place in output array */
+            array_b[--count[index]] = input_array[i];
+        }
+
+        /* input array is now sorted according to current digit.
+           swap input_array's and array_b's pointers to simulate copying data
+           from one array to other.
+        */
+       tmp = input_array;
+       input_array = array_b;
+       array_b = tmp;
+    }
+
+    /* if odd number of swaps happened with the pointers,
+        then copy over data once more before finishing
+    */
+   if (original_array == array_b)
+   {
+       tmp = input_array;
+       input_array = array_b;
+       array_b = tmp;
+   }
+
+   free(array_b);
+   free(count);
+
 }
