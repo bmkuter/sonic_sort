@@ -21,7 +21,7 @@
 #include <cstdlib>
 #include <math.h>
 #include <time.h>
-#include "./serial_utilities/sonic_sort.h"
+
 
 // Assertion to check for errors
 #define CUDA_SAFE_CALL(ans) { gpuAssert((ans), (char *)__FILE__, __LINE__); }
