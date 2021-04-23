@@ -34,14 +34,14 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
   }
 }
 
-#define NUM_THREADS_PER_BLOCK   16    //sqr(256) = 16
+#define NUM_THREADS   16    //sqr(256) = 16
 #define NUM_BLOCKS         128          //sqr(16) = 4
 #define PRINT_TIME         1
-#define SM_ARR_LEN        2048
+#define SM_ARR_LEN        10
 #define COMPARE_TOL         .05
 #define TILE_WIDTH          16
 
-#define THRESHOLD 10
+#define THRESHOLD 1
 
 #define CPNS 3.0
 
@@ -60,8 +60,8 @@ void printArray(data_t *array, int rowlen);
 void initializeArray1D(data_t *arr, int len, int seed);
 void sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
 __global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
-__global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
-/*__device_*/int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
+__global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int array_len);
+__device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
 data_t fRand(data_t fMin, data_t fMax);
 
 /* Prototypes */
@@ -131,8 +131,8 @@ int main(int argc, char **argv){
   data_t *d_arrayC;
 
   // Arrays on the host memory
-  data_t *h_arrayA;
-  data_t *h_arrayB;
+  //data_t *h_arrayA;
+  //data_t *h_arrayB;
   data_t *h_arrayC;
   data_t *h_arrayC_gold;
 
@@ -141,22 +141,34 @@ int main(int argc, char **argv){
   size_t allocSize = arrLen*sizeof(data_t);
   
   // Allocate arrays on host memory
-  h_arrayA                   = (data_t *) malloc(allocSize);
-  h_arrayB                   = (data_t *) malloc(allocSize);
-  h_arrayC                   = (data_t *) calloc(arrLen,sizeof(data_t));    //Output for Device
+  //h_arrayA                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
+  //h_arrayB                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
+  h_arrayC                   = (data_t *) calloc(2*arrLen,sizeof(data_t));    //Output for Device
   h_arrayC_gold              = (data_t *) calloc(arrLen,sizeof(data_t));    //Validation array
   
-  if (!h_arrayA) {
-      free((void *) h_arrayA);
+  if (!h_arrayC) {
+      free((void *) h_arrayC);
       printf("\n COULDN'T ALLOCATE STORAGE FOR h_array \n");
       return -1;  /* Couldn't allocate storage */
   }
   printf("Host Init\n");
   // Initialize the host arrays
   // Arrys are initialized with a known seed for reproducability
-  initializeArray1D(h_arrayA, arrLen, 123);
-  initializeArray1D(h_arrayB, arrLen, 351);
-  initializeArray1D(h_arrayC, arrLen, 12);
+  //initializeArray1D(h_arrayA, arrLen, 123);
+  //initializeArray1D(h_arrayB, arrLen, 351);
+  //initializeArray1D(h_arrayC, arrLen, 12);
+  data_t h_arrayA[SM_ARR_LEN] = {1,1,1,2,3,4,6,7,9,9};
+  data_t h_arrayB[SM_ARR_LEN] = {2,2,3,5,6,7,7,8,9,9};
+  
+  printf("arrayA: ");
+  printArray(h_arrayA,SM_ARR_LEN);
+  printf ("\n");
+  
+  printf("arrayB: ");
+  printArray(h_arrayB,SM_ARR_LEN);
+  printf ("\n");
+   
+  
   printf("Host Init Finished\n");
 
   // Select GPU
@@ -165,17 +177,17 @@ int main(int argc, char **argv){
   // Allocate GPU memory
   
   CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayA, allocSize));
-  CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayC, allocSize));
   CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayB, allocSize));
-
+  CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayC, 2*allocSize));
+  
   // Transfer the arrays to the GPU memory
   CUDA_SAFE_CALL(cudaMemcpy(d_arrayA, h_arrayA, allocSize, cudaMemcpyHostToDevice));
   CUDA_SAFE_CALL(cudaMemcpy(d_arrayB, h_arrayB, allocSize, cudaMemcpyHostToDevice));
   printf("Kernel Launch\n");
    //Launch the kernel(nuke)   SM_ARR_LEN
      //define block geometry? 
-  dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);
-  dim3 dimGrid(arrLen/TILE_WIDTH, arrLen/TILE_WIDTH); 
+  dim3 dimBlock(2*SM_ARR_LEN, 1);
+  dim3 dimGrid(1, 1); 
   
 #if PRINT_TIME
   // Create the cuda events
@@ -185,12 +197,14 @@ int main(int argc, char **argv){
   cudaEventRecord(start, 0);
 #endif
 
-  sonic_sort<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
+  //sonic_sort<<<1, 256>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
   for (int i = 0; i < THRESHOLD; i++)
   {
-       mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
+       mega_merge<<<1, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
        cudaDeviceSynchronize();
   }
+  
+  
   
 #if PRINT_TIME
   /* Stop and destroy the timer */
@@ -209,20 +223,21 @@ int main(int argc, char **argv){
   CUDA_SAFE_CALL(cudaPeekAtLastError());
 
   // Transfer the results back to the host
-  CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, allocSize, cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, 2*allocSize, cudaMemcpyDeviceToHost));
   //printArray(h_array_result,SM_ARR_LEN);
 
 /* Testing region */
+/*
   int test[10] = {1,1,2,2,3,4,5,6,7,8};
   for (int i = 0; i < 10; i++)
   {
     printf("%d ", test[i]);
   }
   printf("\n");
-  int me = 8;
-  int myPlace = binary_search(test, 0, 9, me, 0 /* 0 = left || 1 = right */, 10);
+  int me = 1;
+  int myPlace = binary_search(test, 0, 9, me, 0 , 10); // 0 = left || 1 = right
   printf("My value: %d\nHow many values are smaller than me: %d\n\n",me,myPlace);
-
+*/
  
 //HOST SOR. Use copied SOR function here.
   
@@ -235,9 +250,13 @@ int main(int argc, char **argv){
   time_stamp = interval(time_start, time_stop);
   
   printf("CPU Time: %.2f (msec)\n",1000*time_stamp);
+  
+  printArray(h_arrayC,2*SM_ARR_LEN);
+  printf("\n");
 
 //Change to compare SOR'd matrices using difference
 
+/*
 printf("Compare\n");
   // Compare the results
 
@@ -250,6 +269,7 @@ printf("Compare\n");
   else {
     printf("\nTEST PASSED: All results matched\n");
   }
+*/
 
   // Free-up device and host memory
   CUDA_SAFE_CALL(cudaFree(d_arrayA));
@@ -257,8 +277,8 @@ printf("Compare\n");
   CUDA_SAFE_CALL(cudaFree(d_arrayC));
 
 
-  free(h_arrayA);
-  free(h_arrayB);
+  //free(h_arrayA);
+  //free(h_arrayB);
   free(h_arrayC);
   free(h_arrayC_gold);
 
@@ -283,15 +303,35 @@ __global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
    
 }
 
-__global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen) 
+__global__ void mega_merge(data_t *left_array, data_t *right_array, data_t *arrayC, long int array_len) 
 {
+  /* Input arrays are subdivisions of the original matrix, being operated on in parallel. 
+   * Output has to be some shared array the same size as the original array.
+   */
+
   int bx = blockIdx.x; 
   int tx = threadIdx.x; 
+  int array_side = (tx < array_len) ? 0 : 1; /* Left (0) or Right (1) array */
+  int element = -1;
+  int smaller_than_me = 0;
+  /* Setting my element number if I'm right array */
+  if(array_side) element = tx - array_len;
+  /* Setting my element number if I'm left array */
+  else element = tx;
   
+  /* Left Side, so we want to search right array */
+  if (!array_side) smaller_than_me = element + binary_search(right_array,0,array_len-1,left_array[element],array_side,array_len);
+  /* Right Side, so we want to search left array */
+  else if (array_side) smaller_than_me = element + binary_search(left_array,0,array_len-1,right_array[element],array_side,array_len);
+  
+  cuPrintf("How many smaller than me: %d\n", smaller_than_me);
+  
+  arrayC[smaller_than_me] = (array_side) ? right_array[element] : left_array[element];
   
 }
+
 //Add input for left or right array, which is determined by the thread through threadID & array_len
-/*__device_*/ int binary_search(data_t *array, int L, int R, int X, int which_array, int array_len)
+__device__ int binary_search(data_t *array, int L, int R, int X, int which_array, int array_len)
 {
   /* 
   Variables:
@@ -304,7 +344,6 @@ __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
 
  The overall goal here is to determine how many elements in the other array are smaller than me (X). On ties, the item with the smaller threadID goes first in the output list. The number of smaller items can be represented by M, or our current place in the array. */
   int left_value = 0, center_value = 0, right_value = 0;
-  int iteration = -1;
   
   while(L <=  R)
   {
@@ -313,7 +352,7 @@ __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
     center_value = array[M];
     right_value = (M == (array_len-1)) ? (MAXVAL+1) : array[M+1];
 
-    printf("\n\nMe: %d\nPosition: %d\nLeft: %d\nCenter: %d\nRight: %d\n\n",X,M,left_value,center_value,right_value);
+    //printf("\n\nMe: %d\nPosition: %d\nLeft: %d\nCenter: %d\nRight: %d\n\n",X,M,left_value,center_value,right_value);
 
     /* If we are equal to the center value, we have to look at which SIDE we are */
     if(center_value == X)
@@ -390,10 +429,10 @@ __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
   }
   /* Need flag to indicate if we're bigger or smaller than everything in the other list */
   
-  printf("Outside array boundaries\n");
+  //printf("Outside array boundaries\n");
   
   if(X > array[array_len - 1]) return array_len; /* We're bigger, so we return array length, since we're larger than every element in the other array. */
-  else if (X <= array[0]) return 0; /* We're smaller, so we return 0 because there are no elements in the other array smaller than us. */
+  else if (X < array[0]) return 0; /* We're smaller, so we return 0 because there are no elements in the other array smaller than us. */
   else return -1; /*Error condition */
   
 }
@@ -414,7 +453,7 @@ void printArray(data_t *array, int rowlen)
   int i;
   for (i=0; i < rowlen; i++)
   {
-    printf("%-5.3f   ", array[i]);
+    printf("%d   ", array[i]);
   }
  
 } 
