@@ -50,10 +50,10 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define NUM_TESTS 1
 #define OPTIONS 1
 
-#define MINVAL   0.0
-#define MAXVAL  10.0
+#define MINVAL   0
+#define MAXVAL  10
 
-typedef unsigned int data_t;
+typedef int data_t;
 
 /* Prototypes */
 void printArray(data_t *array, int rowlen);
@@ -61,7 +61,7 @@ void initializeArray1D(data_t *arr, int len, int seed);
 void sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
 __global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
 __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
-__device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
+/*__device_*/int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
 data_t fRand(data_t fMin, data_t fMax);
 
 /* Prototypes */
@@ -184,9 +184,10 @@ int main(int argc, char **argv){
   // Record event on the default stream
   cudaEventRecord(start, 0);
 #endif
+
+  sonic_sort<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
   for (int i = 0; i < THRESHOLD; i++)
   {
-       sonic_sort<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
        mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
        cudaDeviceSynchronize();
   }
@@ -211,8 +212,18 @@ int main(int argc, char **argv){
   CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, allocSize, cudaMemcpyDeviceToHost));
   //printArray(h_array_result,SM_ARR_LEN);
 
+/* Testing region */
+  int test[10] = {1,1,2,2,3,4,5,6,7,8};
+  for (int i = 0; i < 10; i++)
+  {
+    printf("%d ", test[i]);
+  }
+  printf("\n");
+  int me = 8;
+  int myPlace = binary_search(test, 0, 9, me, 0 /* 0 = left || 1 = right */, 10);
+  printf("My value: %d\nHow many values are smaller than me: %d\n\n",me,myPlace);
 
-
+ 
 //HOST SOR. Use copied SOR function here.
   
   wakeup_delay();
@@ -279,8 +290,8 @@ __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
   
   
 }
-
-__device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len)
+//Add input for left or right array, which is determined by the thread through threadID & array_len
+/*__device_*/ int binary_search(data_t *array, int L, int R, int X, int which_array, int array_len)
 {
   /* 
   Variables:
@@ -288,87 +299,101 @@ __device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, 
     L := Leftmost element, usually 0
     R := Rightmost element, array_len - 1.
     X := The variable to search for. "Us" in this context.
-    thread_ID := Our CUDA thread number within the block. Correlates to an element number.
+    which_array := || 0 = left, 1 = right || Indicates if we are left or right array when comparing ourselves to an identical value. Left array goes first on a tie, right array goes second on a tie. 
     array_len := Length of the input array.
 
  The overall goal here is to determine how many elements in the other array are smaller than me (X). On ties, the item with the smaller threadID goes first in the output list. The number of smaller items can be represented by M, or our current place in the array. */
   int left_value = 0, center_value = 0, right_value = 0;
+  int iteration = -1;
   
   while(L <=  R)
   {
-    int M = L + (R-L)/2;
+    int M = L + (R-L)/2; /*Division will probably be compiled away, so no need for i>>1 */
+    left_value = (M == (0)) ? (MINVAL-1) : array[M-1];
+    center_value = array[M];
+    right_value = (M == (array_len-1)) ? (MAXVAL+1) : array[M+1];
+
+    printf("\n\nMe: %d\nPosition: %d\nLeft: %d\nCenter: %d\nRight: %d\n\n",X,M,left_value,center_value,right_value);
+
+    /* If we are equal to the center value, we have to look at which SIDE we are */
+    if(center_value == X)
+    {
+      /* First lets consider left array values */
+      if(!which_array)
+      {  
+        /* If left value is less than us, return our current place */
+        if(left_value < X) return M; 
+        /* If left value is equal to us, we need to bin_hop leftward */
+        else if (left_value == X) R = M - 1;
+        /* Error condition */
+        else return -1; 
+      }
+      /* Now lets consider right array values */
+      else if (which_array)
+      {
+        /* If right value is greater than us, move right one and return */
+        if(right_value > X) return (++M); 
+        /* If right value is equal to us, we need to bin_hop rightward */
+        else if (right_value == X) L = M + 1;
+        /* Error condition */
+        else return -1; 
+      }
+      /* Error condition */
+      else return -1;
+    }
     
-    if (array[M] == X) /* If I'm the same size as center. Now we compare threadIDs, and lower threadID will come first always */
+    /* If we are less than the center value, we will want to move left */
+    else if(center_value > X)
     {
-      /* If we're the same, look at thread ID. If smaller than array_len, I'm first. Otherwise second.*/
-      if (thread_id < array_len)
+      /* Look left */
+      /* If left value is less than us, return our current place */
+      if(left_value < X) return M;
+      /* If left value is equal to us, we need to check SIDE */
+      else if(left_value == X)
       {
-        /* We come first, but need to check what's left, in case its also equal to us. If it is, we bin_jump */
-        if (array[M-1] < X ) return M;
-        else
-        {
-          /* We're the same size as center. We have a smaller threadID so we look left and compare. We aren't greater than it, so we need to binary hope to the left to find how many elements come before us in output array. */
-          R = M - 1; 
-        }
+        /* If we are the left array, we need to bin_hop leftward */
+        if(!which_array) R = M - 1;
+        /* If we are right array, we see that we are less than center, and same as left. But we want to be to the right of any identical values from left, so we can return current place. */
+        else if(which_array) return M;
+        /* Error condition */
+        else return -1;
       }
-      /* Our threadID is larger, so we need to move right. */
-      else if (thread_id > array_len)
-      {
-        /* We come second, but we need to look right and see if anything else is the same as us. If not, we have to move one element to the right and return. If there's something the same size as us to the right, we need to bin_hop rightwards. */
-        if (array[M+1] > X) return M++; 
-        else
-        {
-          L = M + 1;
-        }
-      }
+      /* If the left value is also greater than us, we need to bin_hop further leftward in the array. */
+      else if(left_value > X) R = M - 1;
+      /* Error condition */
+      else return -1;
     }
-    /* If I'm bigger than center... */
-    if (array[M] < X) 
+    
+    /* If we are greater than center value, we will want to move to the right */
+    else if(center_value < X)
     {
-      /* ...check right.*/
-      /* If right is greater than us or equal to us...*/ 
-      if (array[M+1] > X)
-      { 
-        /* Check to see if right is the same as me */
-        if (array[M+1] = X)
-        {
-          /* Check my threadID to see if I go first */
-          if (thread_id < array_len) return M++;
-          /* Otherwise we need to bin_hop to the right */
-          else
-          {
-            L = M + 1;
-          }  
-        }
-        /* I'm bigger than center, but smaller than R */
-        return M++; 
-      }
-      /* If right isn't larger or equal, we bin_hop right. */
-      else
+      /* Look right. If its greater than us, move right 1 and return */
+      if(right_value > X) return (++M);
+      /* If right value is equal to us, check SIDE */
+      else if(right_value == X)
       {
-        L = M + 1;
+        /* If left array, we will come before any equal values so we can shift right 1 and return */
+        if(!which_array) return (++M);
+        /* If we are right array, we will need to bin_hop right since we need to be to the right of any equal values */
+        else if (which_array) L = M + 1;
+        /* Error condition */
+        else return -1; 
       }
+      /* If right is still smaller than us, we need to bin_hop even further right */
+      else if(right_value < X) L = M + 1;
+      /* Error condition */
+      else return -1;
     }
-    else  /* If I'm smaller than center */
-    {
-      /* Look Left and compare */
-      /* If we're bigger than left and less than center, we return our current place, as it gives how many elements are smaller than us. */
-      if (array[M-1] < X) return M;
-      /* If left is the same as us, we need to check thread_id to see who goes first */
-      else if (array[M-1] = X)
-      {
-        /* We check if our threadID is less, indicating we go first. So we bin_hop left, as we don't care about right. */
-        if(thread_id < array_len) R = M - 1;
-        /* Otherwise we can return M, since center is larger than us. */
-        else return M;
-      }
-    }
+    
+    /* Error condition */
+    else return -1;
   }
-  
   /* Need flag to indicate if we're bigger or smaller than everything in the other list */
   
+  printf("Outside array boundaries\n");
+  
   if(X > array[array_len - 1]) return array_len; /* We're bigger, so we return array length, since we're larger than every element in the other array. */
-  else if (X < array[0]) return 0; /* We're smaller, so we return 0 because there are no elements in the other array smaller than us. */
+  else if (X <= array[0]) return 0; /* We're smaller, so we return 0 because there are no elements in the other array smaller than us. */
   else return -1; /*Error condition */
   
 }
@@ -392,7 +417,7 @@ void printArray(data_t *array, int rowlen)
     printf("%-5.3f   ", array[i]);
   }
  
-}
+} 
 
 data_t fRand(data_t fMin, data_t fMax)
 {
