@@ -1,8 +1,9 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include "sonic_sort.h"
 
 /* RadixSort implementation using Counting Sort and a radix of 256 or 1-byte */
-
 
 void radixsort(unsigned int *input_array, int num_elements)
 {
@@ -26,7 +27,7 @@ void radixsort(unsigned int *input_array, int num_elements)
     for (shift = 0, s = 0; shift < 4; shift++, s+=8)
     {
         /* reset the count array */
-        for (i = 0; i < num_elements; i++)
+        for (i = 0; i < 256; i++)
         {
             count[i] = 0;
         }
@@ -45,12 +46,12 @@ void radixsort(unsigned int *input_array, int num_elements)
         }
 
         /* build the output array */
-        for (i = n-1; i >= 0; i--)
+        for (i = num_elements-1; i >= 0; i--)
         {
             index = (input_array[i] >> s) &0xff;
 
             /* decrement element within count array to figure out input_array[i]'s place in output array */
-            array_b[--count[index]] == input_array[i];
+            array_b[--count[index]] = input_array[i];
         }
 
         /* input array is now sorted according to current digit.
@@ -75,4 +76,58 @@ void radixsort(unsigned int *input_array, int num_elements)
    free(array_b);
    free(count);
 
+}
+
+/*
+  merge algorithm for two sorted arrays: https://www.geeksforgeeks.org/merge-two-sorted-arrays/
+*/
+void merge_adjacent_arrays(unsigned int *leftSubArray, unsigned int *rightSubArray, const unsigned int sizeLeft, const unsigned int sizeRight)
+{
+    /* pointers that will help iterate throught the lists */
+    int i=0, j=0, k=0;
+
+    /* create array that holds merged list */
+    unsigned int *result = (unsigned int *) malloc((sizeLeft + sizeRight)*sizeof(unsigned int));
+
+    //place the elements of the left and right arrays in the correct place
+    while ( i < sizeLeft && j < sizeRight)
+    {
+        
+        if (leftSubArray[i] < rightSubArray[j]) 
+        {
+            result[k++] = leftSubArray[i++];
+        }
+        else
+        {
+            result[k++] = rightSubArray[j++];
+        }
+    }
+
+    //merge remaining elements
+    while ( i < sizeLeft)
+    {
+        result[k++] = leftSubArray[i++];
+    }
+
+    //merge remaining elements
+    while ( j < sizeRight)
+    {
+        result[k++] = rightSubArray[j++];
+    }
+
+    memcpy(leftSubArray, result, (sizeLeft + sizeRight)*sizeof(unsigned int));
+
+}
+
+void initializeArray1D(unsigned int *arr, int len, int seed)
+{
+    int i;
+    unsigned int randNum;
+    srand(seed);
+
+    for (i = 0; i < len; i++)
+    {
+        randNum = (unsigned int) rand();
+        arr[i] = randNum;
+    }
 }
