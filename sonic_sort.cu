@@ -39,7 +39,7 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define NUM_THREADS   16    //sqr(256) = 16
 #define NUM_BLOCKS         128          //sqr(16) = 4
 #define PRINT_TIME         1
-#define SM_ARR_LEN        512
+#define SM_ARR_LEN        1024
 
 #define THRESHOLD 1
 
@@ -59,11 +59,12 @@ typedef unsigned int data_t;
 void printArray(data_t *array, int rowlen);
 void initializeArray1D(data_t *arr, int len, int seed);
 void sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
-__global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
+__global__ void sonic_sort(data_t *input_array, data_t *array_b, data_t arr_len, data_t num_elements_per_thread);
 __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int array_len);
 __device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
 void radixsort(unsigned int *input_array, int num_elements);
-void merge_adjacent_arrays(unsigned int *leftSubArray, unsigned int *rightSubArray, unsigned int *outputArray,const unsigned int sizeLeft, const unsigned int sizeRight);
+void merge_adjacent_arrays(unsigned int *leftSubArray, unsigned int *rightSubArray, 
+                           unsigned int *outputArray,const unsigned int sizeLeft, const unsigned int sizeRight);
 
 int clock_gettime(clockid_t clk_id, struct timespec *tp);
 
@@ -105,7 +106,7 @@ double wakeup_delay()
 }
 
 int main(int argc, char **argv){
-  long int arrLen = 0;
+  data_t arrLen = 0;
   struct timespec time_start, time_stop;
   printf("Test\n");
   
@@ -155,7 +156,7 @@ int main(int argc, char **argv){
   // Initialize the host arrays
   // Arrys are initialized with a known seed for reproducability
   initializeArray1D(h_arrayA, arrLen, 123);
-  initializeArray1D(h_arrayB, arrLen, 351);
+  //initializeArray1D(h_arrayB, arrLen, 351);
   //initializeArray1D(h_arrayC, arrLen, 12);
   //data_t h_arrayA[SM_ARR_LEN] = {19, 14, 3, 16, 7, 2, 8, 20, 4, 15};
   //data_t h_arrayB[SM_ARR_LEN] = {8, 11, 10, 4, 7, 1, 17, 20, 5, 14};
@@ -164,15 +165,16 @@ int main(int argc, char **argv){
   printArray(h_arrayA,SM_ARR_LEN);
   printf ("\n");
   
+  /*
   printf("arrayB: ");
   printArray(h_arrayB,SM_ARR_LEN);
   printf ("\n");
   
   printf("Serial Sorting. . .\n");
-  
-  radixsort(h_arrayA, SM_ARR_LEN);
-  radixsort(h_arrayB, SM_ARR_LEN);
-  
+  */
+  //radixsort(h_arrayA, SM_ARR_LEN);
+  //radixsort(h_arrayB, SM_ARR_LEN);
+ /* 
   printf("arrayA: ");
   printArray(h_arrayA,SM_ARR_LEN);
   printf ("\n");
@@ -180,7 +182,7 @@ int main(int argc, char **argv){
   printf("arrayB: ");
   printArray(h_arrayB,SM_ARR_LEN);
   printf ("\n");
-   
+  */ 
   
   printf("Host Init Finished\n");
 
@@ -191,14 +193,14 @@ int main(int argc, char **argv){
   
   CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayA, allocSize));
   CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayB, allocSize));
-  CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayC, 2*allocSize));
+  CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayC, allocSize));
   
   // Transfer the arrays to the GPU memory
   CUDA_SAFE_CALL(cudaMemcpy(d_arrayA, h_arrayA, allocSize, cudaMemcpyHostToDevice));
-  CUDA_SAFE_CALL(cudaMemcpy(d_arrayB, h_arrayB, allocSize, cudaMemcpyHostToDevice));
+  //CUDA_SAFE_CALL(cudaMemcpy(d_arrayB, h_arrayB, allocSize, cudaMemcpyHostToDevice));
   printf("Kernel Launch\n");
 
-  dim3 dimBlock(2*SM_ARR_LEN, 1);
+  dim3 dimBlock(SM_ARR_LEN, 1);
   dim3 dimGrid(1, 1); 
   
 #if PRINT_TIME
@@ -209,15 +211,15 @@ int main(int argc, char **argv){
   cudaEventRecord(start, 0);
 #endif
 
-  //sonic_sort<<<1, 256>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
+  sonic_sort<<<1, 2>>>(d_arrayA, d_arrayB, arrLen, arrLen/2);
   for (int i = 0; i < THRESHOLD; i++)
   {
       /* https://forums.developer.nvidia.com/t/size-limitation-for-1d-arrays-in-cuda/31066 */
-       mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
-       //cudaDeviceSynchronize();
+      mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayA+arrLen/2,d_arrayC,arrLen/2); //last argument is length of input arrays
+      //cudaDeviceSynchronize();
   }
   
-  
+
   
 #if PRINT_TIME
   /* Stop and destroy the timer */
@@ -236,11 +238,16 @@ int main(int argc, char **argv){
   CUDA_SAFE_CALL(cudaPeekAtLastError());
 
   // Transfer the results back to the host
-  CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, 2*allocSize, cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, allocSize, cudaMemcpyDeviceToHost));
  
+  CUDA_SAFE_CALL(cudaMemcpy(h_arrayA, d_arrayA, allocSize, cudaMemcpyDeviceToHost));
 //HOST SOR. Use copied SOR function here.
       
-      
+  printf("arrayA: ");
+  printArray(h_arrayA,SM_ARR_LEN);
+  printf ("\n");    
+  
+  /*    
   wakeup_delay();
    printf("Host Launch\n");
   double time_stamp;
@@ -251,11 +258,12 @@ int main(int argc, char **argv){
   time_stamp = interval(time_start, time_stop);
   
   printf("CPU Time: %.6f (msec)\n",1000*time_stamp);
+  */
   
   printf("\nCUDA Array\n"); 
-  printArray(h_arrayC,2*SM_ARR_LEN);
-  printf("\nSerial Array\n");
-  printArray(h_arrayC_gold,2*SM_ARR_LEN);
+  printArray(h_arrayC,SM_ARR_LEN);
+  //printf("\nSerial Array\n");
+  //printArray(h_arrayC_gold,2*SM_ARR_LEN);
   printf("\n");
 
 //Change to compare SOR'd matrices using difference
@@ -302,9 +310,85 @@ void sort(data_t *arrayA, data_t *arrayB, data_t *arrayC, long int rowlen)
 }
 
 
-__global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen) 
+__global__ void sonic_sort(data_t *input_array, data_t *array_b, data_t arr_len, data_t num_elements_per_thread) 
 {
+    //int bx = blockIdx.x; /* Can we use this block as a way to work on different sections? */
+    int tx = threadIdx.x;
+    
+    
+    
+    int thread_starting_point = tx*num_elements_per_thread;
+    int thread_end_point = thread_starting_point + num_elements_per_thread;
+    int shift, s, i, index;
+    unsigned int *tmp;
+    
+    
+    /* base case: if array is empty or its one element then it is sorted. */
+    if (num_elements_per_thread <= 1) return;
+
+    /* create the output array for count sort */
+    //unsigned int *array_b= (unsigned int *) malloc(arr_len*sizeof(unsigned int));
+    
    
+   /* initialize array that counts within counting sort*/
+    int *count= (int*) malloc(256*sizeof(unsigned int));
+
+    /* this will allow us to know if we did even number of swaps
+     between input_array pointer and output pointer */
+    unsigned int* original_array = input_array;
+
+    /* if the radix is 256 (total numbers in a 1 byte), then sorting 32-bit numbers will take 4 iteration */
+    for (shift = 0, s = 0; shift < 4; shift++, s+=8)
+    {
+        /* reset the count array */
+        for (i = 0; i < 256; i++)
+        {
+            count[i] = 0;
+        }
+
+        /* counting occurances of a number and incrementing elements in count array */
+        for (i = thread_starting_point; i < thread_end_point; i++)
+        {
+            /* access element input, shift right 's' times, then do bit-wise and with value 255 */
+            count[(input_array[i] >> s) &0xff]++;
+        }
+
+        /* do prefix sum so that count[i] indicates where a digit belongs in the output array. */
+        for (i = 1; i < 256; i++)
+        {
+            count[i] += count[i-1];
+        }
+
+        /* build the output array */
+        for (i = thread_end_point-1; i >= thread_starting_point; i--)
+        {
+            index = (input_array[i] >> s) &0xff;
+
+            /* decrement element within count array to figure out input_array[i]'s place in output array */
+            array_b[thread_starting_point + (--count[index])] = input_array[i];
+        }
+
+        /* input array is now sorted according to current digit.
+           swap input_array's and array_b's pointers to simulate copying data
+           from one array to other.
+        */
+       tmp = input_array;
+       input_array = array_b;
+       array_b = tmp;
+    }
+
+    /* if odd number of swaps happened with the pointers,
+        then copy over data once more before finishing
+    */
+   if (original_array == array_b)
+   {
+       tmp = input_array;
+       input_array = array_b;
+       array_b = tmp;
+   }
+
+   free(array_b);
+   free(count);
 }
 
 __global__ void mega_merge(data_t *left_array, data_t *right_array, data_t *arrayC, long int array_len) 
