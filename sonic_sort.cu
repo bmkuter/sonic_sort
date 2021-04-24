@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <math.h>
 #include <time.h>
+#include <unistd.h>
 
 
 // Assertion to check for errors
@@ -39,8 +40,6 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define NUM_BLOCKS         128          //sqr(16) = 4
 #define PRINT_TIME         1
 #define SM_ARR_LEN        512
-#define COMPARE_TOL         .05
-#define TILE_WIDTH          16
 
 #define THRESHOLD 1
 
@@ -63,12 +62,14 @@ void sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
 __global__ void sonic_sort(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int rowlen);
 __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long int array_len);
 __device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
-data_t fRand(data_t fMin, data_t fMax);
 void radixsort(unsigned int *input_array, int num_elements);
+void merge_adjacent_arrays(unsigned int *leftSubArray, unsigned int *rightSubArray, unsigned int *outputArray,const unsigned int sizeLeft, const unsigned int sizeRight);
 
 int clock_gettime(clockid_t clk_id, struct timespec *tp);
 
-data_t interval(struct timespec start, struct timespec end)
+int clock_gettime(clockid_t clk_id, struct timespec *tp);
+
+double interval(struct timespec start, struct timespec end)
 {
   struct timespec temp;
   temp.tv_sec = end.tv_sec - start.tv_sec;
@@ -77,16 +78,16 @@ data_t interval(struct timespec start, struct timespec end)
     temp.tv_sec = temp.tv_sec - 1;
     temp.tv_nsec = temp.tv_nsec + 1000000000;
   }
-  return (((data_t)temp.tv_sec) + ((data_t)temp.tv_nsec)*1.0e-9);
+  return (((double)temp.tv_sec) + ((double)temp.tv_nsec)*1.0e-9);
 }
 
 /* This routine "wastes" a little time to make sure the machine gets
    out of power-saving mode (800 MHz) and switches to normal speed. */
-data_t wakeup_delay()
+double wakeup_delay()
 {
-  data_t meas = 0; int i, j;
+  double meas = 0; int i, j;
   struct timespec time_start, time_stop;
-  data_t quasi_random = 0;
+  double quasi_random = 0;
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
   j = 100;
   while (meas < 1.0) {
@@ -143,7 +144,7 @@ int main(int argc, char **argv){
   h_arrayA                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
   h_arrayB                   = (data_t *) calloc(arrLen,sizeof(data_t)); 
   h_arrayC                   = (data_t *) calloc(2*arrLen,sizeof(data_t));    //Output for Device
-  h_arrayC_gold              = (data_t *) calloc(arrLen,sizeof(data_t));    //Validation array
+  h_arrayC_gold              = (data_t *) calloc(2*arrLen,sizeof(data_t));    //Validation array
   
   if (!h_arrayC) {
       free((void *) h_arrayC);
@@ -196,8 +197,7 @@ int main(int argc, char **argv){
   CUDA_SAFE_CALL(cudaMemcpy(d_arrayA, h_arrayA, allocSize, cudaMemcpyHostToDevice));
   CUDA_SAFE_CALL(cudaMemcpy(d_arrayB, h_arrayB, allocSize, cudaMemcpyHostToDevice));
   printf("Kernel Launch\n");
-   //Launch the kernel(nuke)   SM_ARR_LEN
-     //define block geometry? 
+
   dim3 dimBlock(2*SM_ARR_LEN, 1);
   dim3 dimGrid(1, 1); 
   
@@ -212,8 +212,9 @@ int main(int argc, char **argv){
   //sonic_sort<<<1, 256>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
   for (int i = 0; i < THRESHOLD; i++)
   {
+      /* https://forums.developer.nvidia.com/t/size-limitation-for-1d-arrays-in-cuda/31066 */
        mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayB,d_arrayC,arrLen);
-       cudaDeviceSynchronize();
+       //cudaDeviceSynchronize();
   }
   
   
@@ -236,34 +237,25 @@ int main(int argc, char **argv){
 
   // Transfer the results back to the host
   CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, 2*allocSize, cudaMemcpyDeviceToHost));
-  //printArray(h_array_result,SM_ARR_LEN);
-
-/* Testing region */
-/*
-  int test[10] = {1,1,2,2,3,4,5,6,7,8};
-  for (int i = 0; i < 10; i++)
-  {
-    printf("%d ", test[i]);
-  }
-  printf("\n");
-  int me = 1;
-  int myPlace = binary_search(test, 0, 9, me, 0 , 10); // 0 = left || 1 = right
-  printf("My value: %d\nHow many values are smaller than me: %d\n\n",me,myPlace);
-*/
  
 //HOST SOR. Use copied SOR function here.
-  
+      
+      
   wakeup_delay();
    printf("Host Launch\n");
-  data_t time_stamp;
+  double time_stamp;
   clock_gettime(CLOCK_REALTIME, &time_start);
-    sort(h_arrayA,h_arrayB,h_arrayC_gold,arrLen);
+      merge_adjacent_arrays(h_arrayA, h_arrayB, h_arrayC_gold,arrLen, arrLen);
+      //sleep(1);
   clock_gettime(CLOCK_REALTIME, &time_stop);
   time_stamp = interval(time_start, time_stop);
   
-  printf("CPU Time: %.2f (msec)\n",1000*time_stamp);
+  printf("CPU Time: %.6f (msec)\n",1000*time_stamp);
   
+  printf("\nCUDA Array\n"); 
   printArray(h_arrayC,2*SM_ARR_LEN);
+  printf("\nSerial Array\n");
+  printArray(h_arrayC_gold,2*SM_ARR_LEN);
   printf("\n");
 
 //Change to compare SOR'd matrices using difference
@@ -289,8 +281,8 @@ printf("Compare\n");
   CUDA_SAFE_CALL(cudaFree(d_arrayC));
 
 
-  //free(h_arrayA);
-  //free(h_arrayB);
+  free(h_arrayA);
+  free(h_arrayB);
   free(h_arrayC);
   free(h_arrayC_gold);
 
@@ -321,7 +313,7 @@ __global__ void mega_merge(data_t *left_array, data_t *right_array, data_t *arra
    * Output has to be some shared array the same size as the original array.
    */
 
-  int bx = blockIdx.x; 
+  int bx = blockIdx.x; /* Can we use this block as a way to work on different sections? */
   int tx = threadIdx.x; 
   int array_side = (tx < array_len) ? 0 : 1; /* Left (0) or Right (1) array */
   int element = -1;
@@ -540,5 +532,46 @@ void radixsort(unsigned int *input_array, int num_elements)
 
    free(array_b);
    free(count);
+
+}
+
+/*
+  merge algorithm for two sorted arrays: https://www.geeksforgeeks.org/merge-two-sorted-arrays/
+*/
+void merge_adjacent_arrays(unsigned int *leftSubArray, unsigned int *rightSubArray, unsigned int *outputArray,const unsigned int sizeLeft, const unsigned int sizeRight)
+{
+    /* pointers that will help iterate throught the lists */
+    int i=0, j=0, k=0;
+
+    /* create array that holds merged list */
+    //unsigned int *result = (unsigned int *) malloc((sizeLeft + sizeRight)*sizeof(unsigned int));
+
+    //place the elements of the left and right arrays in the correct place
+    while ( i < sizeLeft && j < sizeRight)
+    {
+        
+        if (leftSubArray[i] < rightSubArray[j]) 
+        {
+            outputArray[k++] = leftSubArray[i++];
+        }
+        else
+        {
+            outputArray[k++] = rightSubArray[j++];
+        }
+    }
+
+    //merge remaining elements
+    while ( i < sizeLeft)
+    {
+        outputArray[k++] = leftSubArray[i++];
+    }
+
+    //merge remaining elements
+    while ( j < sizeRight)
+    {
+        outputArray[k++] = rightSubArray[j++];
+    }
+
+    //memcpy(outputArray, result, (sizeLeft + sizeRight)*sizeof(unsigned int));
 
 }

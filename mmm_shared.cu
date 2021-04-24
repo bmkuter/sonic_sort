@@ -37,7 +37,7 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 #define NUM_THREADS_PER_BLOCK   16    //sqr(256) = 16
 #define NUM_BLOCKS         128          //sqr(16) = 4
 #define PRINT_TIME         1
-#define SM_ARR_LEN        2048
+#define SM_ARR_LEN        128
 #define COMPARE_TOL         .05
 #define TILE_WIDTH          16
 
