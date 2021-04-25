@@ -36,12 +36,12 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
   }
 }
 
-#define NUM_THREADS   16    //sqr(256) = 16
-#define NUM_BLOCKS         128          //sqr(16) = 4
+#define NUM_THREADS_PER_SORT        8    
+#define NUM_BLOCKS         128
 #define PRINT_TIME         1
-#define SM_ARR_LEN        1024
+#define SM_ARR_LEN         32
 
-#define THRESHOLD 1
+#define THRESHOLD 2 //log2(NUM_THREADS_PER_SORT)
 
 #define CPNS 3.0
 
@@ -117,7 +117,7 @@ int main(int argc, char **argv){
   }
   else {
     arrLen = (SM_ARR_LEN);
-  }
+  } 
 
   cudaPrintfInit();
 
@@ -201,7 +201,7 @@ int main(int argc, char **argv){
   printf("Kernel Launch\n");
 
   dim3 dimBlock(SM_ARR_LEN, 1);
-  dim3 dimGrid(1, 1); 
+  dim3 dimGrid(1, 1); //arrLen/1024
   
 #if PRINT_TIME
   // Create the cuda events
@@ -210,15 +210,57 @@ int main(int argc, char **argv){
   // Record event on the default stream
   cudaEventRecord(start, 0);
 #endif
-
-  sonic_sort<<<1, 2>>>(d_arrayA, d_arrayB, arrLen, arrLen/2);
+      /* https://forums.developer.nvidia.com/t/size-limitation-for-1d-arrays-in-cuda/31066 */
+      
+  int local_NUM_THREADS_PER_SORT = NUM_THREADS_PER_SORT;
+      
+  sonic_sort<<<dimGrid, NUM_THREADS_PER_SORT>>>(d_arrayA, d_arrayB, arrLen, arrLen/NUM_THREADS_PER_SORT); //4
+  
+  /*
   for (int i = 0; i < THRESHOLD; i++)
   {
-      /* https://forums.developer.nvidia.com/t/size-limitation-for-1d-arrays-in-cuda/31066 */
-      mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayA+arrLen/2,d_arrayC,arrLen/2); //last argument is length of input arrays
-      //cudaDeviceSynchronize();
+      for ( int j = 0; j < local_NUM_THREADS_PER_SORT; j++)
+      {
+          mega_merge<<<dimGrid, dimBlock>>>(d_arrayA,d_arrayA+arrLen/(NUM_THREADS_PER_SORT),d_arrayC,arrLen/NUM_THREADS_PER_SORT);  //last argument is length of input arrays
+      }
+      local_NUM_THREADS_PER_SORT >>= 2;
+      cudaDeviceSynchronize();
+      cudaMemcpy(d_arrayA, d_arrayC, arrLen, cudaMempcyDeviceToDevice);
   }
+  */
   
+  //mega_merge<<<dimGrid, 16>>>(d_arrayA,d_arrayA+8,d_arrayC,8);  //regions 0 & 1
+  
+  //mega_merge<<<dimGrid, 16>>>(d_arrayA+16,d_arrayA+24,d_arrayC+16,8); //regions 2 & 3
+  
+  cudaDeviceSynchronize();
+  //cudaMemcpy(d_arrayA, d_arrayC, arrLen, cudaMemcpyDeviceToDevice);
+  
+  //d_arrayA = 
+  
+  //mega_merge<<<dimGrid, dimBlock>>>(d_arrayC,d_arrayC+16,d_arrayA,16);
+  cudaDeviceSynchronize(); 
+  
+  int potater = arrLen/NUM_THREADS_PER_SORT; //arrLen = 32 & threads = 4
+  
+  int half_array_length = arrLen >> 1; //32 / 2 = 16
+  
+  for (int i = log2((float)NUM_THREADS_PER_SORT); i > 0; i >>= 1)
+  {
+      for (int j = 0; j <= i; j += 2)
+      {
+          //merge(arr+j, arr + (j+1))
+          
+          mega_merge<<<dimGrid, (arrLen/i)>>>(d_arrayA+(j*(half_array_length/i)), d_arrayA+((j+1)*(half_array_length/i)), d_arrayC+(j*(half_array_length/i)),half_array_length/i);
+          
+          //mega_merge<<<dimGrid, 16>>>(d_arrayA,d_arrayA+8,d_arrayC,8);  //regions 0 & 1
+  
+          //mega_merge<<<dimGrid, 16>>>(d_arrayA+16,d_arrayA+24,d_arrayC+16,8); //regions 2 & 3
+      }
+      data_t *temp = d_arrayA;
+      d_arrayA = d_arrayC;
+      d_arrayC = temp;
+  }
 
   
 #if PRINT_TIME
@@ -243,7 +285,7 @@ int main(int argc, char **argv){
   CUDA_SAFE_CALL(cudaMemcpy(h_arrayA, d_arrayA, allocSize, cudaMemcpyDeviceToHost));
 //HOST SOR. Use copied SOR function here.
       
-  printf("arrayA: ");
+  printf("Cuda Array (arrayA): ");
   printArray(h_arrayA,SM_ARR_LEN);
   printf ("\n");    
   
@@ -260,11 +302,6 @@ int main(int argc, char **argv){
   printf("CPU Time: %.6f (msec)\n",1000*time_stamp);
   */
   
-  printf("\nCUDA Array\n"); 
-  printArray(h_arrayC,SM_ARR_LEN);
-  //printf("\nSerial Array\n");
-  //printArray(h_arrayC_gold,2*SM_ARR_LEN);
-  printf("\n");
 
 //Change to compare SOR'd matrices using difference
 
