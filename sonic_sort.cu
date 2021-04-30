@@ -22,16 +22,14 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
   }
 }
 //16777216
-#define BIG_SERIAL_INT              4096
+//#define BIG_SERIAL_INT              4096
 #define NUM_THREADS_PER_SORT        4
 
-#define SM_ARR_LEN                  4096
-#define THREADS_PER_BLOCK_MERGE     1024
-#define BLOCKS                      8
+#define SM_ARR_LEN                  256
+#define THREADS_PER_BLOCK_MERGE     64
+#define BLOCKS                      4 /* Has to be at least NUM_THREADS_PER_SORT */
 
 #define PRINT_TIME                  1
-
-#define THRESHOLD 2 //log2(NUM_THREADS_PER_SORT)
 
 #define CPNS 3.0
 
@@ -96,6 +94,7 @@ double wakeup_delay()
 }
 
 int main(int argc, char **argv){
+  int BIG_SERIAL_INT = SM_ARR_LEN;
   data_t arrLen = 0;
   struct timespec time_start, time_stop;
   printf("Test\n");
@@ -120,6 +119,7 @@ int main(int argc, char **argv){
   data_t *d_arrayA;
   data_t *d_arrayB;
   data_t *d_arrayC;
+  data_t *temp;
 
   // Arrays on the host memory
   data_t *h_arrayA;
@@ -190,6 +190,7 @@ int main(int argc, char **argv){
   // Allocate GPU memory
 
   CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayA, allocSize));
+  CUDA_SAFE_CALL(cudaMalloc((void **)&temp, allocSize));
   CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayB, allocSize));
   CUDA_SAFE_CALL(cudaMalloc((void **)&d_arrayC, allocSize));
 
@@ -225,14 +226,14 @@ int main(int argc, char **argv){
       for ( j = 0; j <= i; j += 2)
       //for ( j = 0, k = 0; k < num_inner_loops; j = j + (2*i),k++)
       {
-          mega_merge<<<dimGrid, THREADS_PER_BLOCK_MERGE >>>(d_arrayA+(j*(half_array_length/i)), d_arrayA+((j+1)*(half_array_length/i)), d_arrayC+(j*(half_array_length/i)),half_array_length/i);
+          mega_merge<<<dimGrid, dimBlock >>>(d_arrayA+(j*(half_array_length/i)), d_arrayA+((j+1)*(half_array_length/i)), d_arrayC+(j*(half_array_length/i)),half_array_length/i);
           //mega_merge<<<dimGrid, (arrLen/i)>>>(d_arrayA+j, d_arrayA+(j+i), d_arrayC+j,half_array_length/i);
           cudaDeviceSynchronize();
 
       }
       //num_inner_loops >>= 1;
 
-      data_t *temp = d_arrayA;
+      temp = d_arrayA;
       d_arrayA = d_arrayC;
       d_arrayC = temp;
   }
@@ -477,7 +478,7 @@ __device__ int binary_search(data_t *array, int L, int R, int X, int which_array
 
   while(L <=  R)
   {
-    int M = L + (R-L)/2; /*Division will probably be compiled away, so no need for i>>1 */
+    int M = L + ((R-L)>>1); /*Division will probably be compiled away, so no need for i>>1 */
     left_value = (M == (0)) ? (MINVAL-1) : array[M-1];
     center_value = array[M];
     right_value = (M == (array_len-1)) ? (MAXVAL+1) : array[M+1];
