@@ -22,11 +22,12 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
   }
 }
 //16777216
-#define BIG_SERIAL_INT              32
+#define BIG_SERIAL_INT              4096
 #define NUM_THREADS_PER_SORT        4
-#define THREADS_PER_BLOCK_MERGE     32
-#define SM_ARR_LEN                  32
-#define BLOCKS                      1
+
+#define SM_ARR_LEN                  4096
+#define THREADS_PER_BLOCK_MERGE     1024
+#define BLOCKS                      8
 
 #define PRINT_TIME                  1
 
@@ -53,6 +54,7 @@ __global__ void mega_merge(data_t *arrayA, data_t *arrayB,data_t *arrayC,long in
 __device__ int binary_search(data_t *array, int L, int R, int X, int thread_id, int array_len);
 void radixsort(unsigned int *input_array, int num_elements);
 void merge_adjacent_arrays(unsigned int *leftSubArray, unsigned int *rightSubArray, const unsigned int sizeLeft, const unsigned int sizeRight);
+int compare_lists(data_t *array1, data_t *array2, long int length);
 
 int clock_gettime(clockid_t clk_id, struct timespec *tp);
 
@@ -223,12 +225,13 @@ int main(int argc, char **argv){
       for ( j = 0; j <= i; j += 2)
       //for ( j = 0, k = 0; k < num_inner_loops; j = j + (2*i),k++)
       {
-          mega_merge<<<dimGrid, (arrLen/i)>>>(d_arrayA+(j*(half_array_length/i)), d_arrayA+((j+1)*(half_array_length/i)), d_arrayC+(j*(half_array_length/i)),half_array_length/i);
+          mega_merge<<<dimGrid, THREADS_PER_BLOCK_MERGE >>>(d_arrayA+(j*(half_array_length/i)), d_arrayA+((j+1)*(half_array_length/i)), d_arrayC+(j*(half_array_length/i)),half_array_length/i);
           //mega_merge<<<dimGrid, (arrLen/i)>>>(d_arrayA+j, d_arrayA+(j+i), d_arrayC+j,half_array_length/i);
           cudaDeviceSynchronize();
 
       }
       //num_inner_loops >>= 1;
+
       data_t *temp = d_arrayA;
       d_arrayA = d_arrayC;
       d_arrayC = temp;
@@ -258,7 +261,7 @@ int main(int argc, char **argv){
 //HOST SOR. Use copied SOR function here.
 
   printf("Cuda Array (arrayA): \n");
-  printArray(h_arrayA,SM_ARR_LEN);
+  //printArray(h_arrayA,SM_ARR_LEN);
   printf ("\n");
 
 /* Serial Land */
@@ -278,8 +281,11 @@ int main(int argc, char **argv){
   printf("CPU Time: %.6f (msec)\n",1000*time_stamp);
 
   printf("Cuda Array (arraySerial): \n");
-  printArray(h_arraySerial,SM_ARR_LEN);
+  //printArray(h_arraySerial,SM_ARR_LEN);
   printf ("\n");
+
+  if (compare_lists(h_arraySerial,h_arrayA,SM_ARR_LEN) != 0) printf("List comparision failed!\n");
+  else printf("Lists are the same!\n");
 
 //Change to compare SOR'd matrices using difference
 
@@ -416,33 +422,41 @@ __global__ void mega_merge(data_t *left_array, data_t *right_array, data_t *arra
 
   int bx = blockIdx.x; /* Can we use this block as a way to work on different sections? */
   int tx = threadIdx.x;
-  int array_side = (tx < array_len/BLOCKS) ? 0 : 1; /* Left (0) or Right (1) array */
-  unsigned long int element = 0;
+  //int array_side = (tx < array_len/BLOCKS) ? 0 : 1; /* Left (0) or Right (1) array */
+  //unsigned long int element = 0;
   unsigned long int smaller_than_me = 0;
 
   /**** New Variables ***/
   int merge_number = bx / ((2*array_len)/THREADS_PER_BLOCK_MERGE);
   long int absolute_element = tx + (bx * THREADS_PER_BLOCK_MERGE);
-  int left_or_right = if( absolute_element - (merge_number * (2 * arr_len)) < array_len ) ? 0 : 1; /* Left (0) or Right (1) array */
+  int left_or_right = ( (absolute_element - (merge_number * (2 * array_len))) < array_len ) ? 0 : 1; /* Left (0) or Right (1) array */
   int relative_block = bx % (array_len/THREADS_PER_BLOCK_MERGE);
   int what_element_am_I_in_my_list = tx + (relative_block * THREADS_PER_BLOCK_MERGE);
   /*******/
 
+  //cuPrintf("List size: %d\nMerge Number: %d\nLocal Element: %d\nLeft or Right: %d\nRelative Block: %d\n\n",array_len, merge_number,what_element_am_I_in_my_list,left_or_right,relative_block);
+
   /* Setting my element number if I'm right array */
-  if(array_side) element = (tx - array_len/BLOCKS) + (bx * THREADS_PER_BLOCK_MERGE >> 1);
+  //if(array_side) element = (tx - array_len/BLOCKS) + (bx * THREADS_PER_BLOCK_MERGE >> 1);
   //if(array_side) element = tx - array_len;
   /* Setting my element number if I'm left array */
-  else element = tx + (bx * THREADS_PER_BLOCK_MERGE >> 1);
+  //else element = tx + (bx * THREADS_PER_BLOCK_MERGE >> 1);
   //else element = tx;
 
   /* Left Side, so we want to search right array */
-  if (!array_side) smaller_than_me = element + binary_search(right_array,0,array_len-1,left_array[element],array_side,array_len);
+  //if (!array_side) smaller_than_me = element + binary_search(right_array,0,array_len-1,left_array[element],array_side,array_len);
   /* Right Side, so we want to search left array */
-  else if (array_side) smaller_than_me = element + binary_search(left_array,0,array_len-1,right_array[element],array_side,array_len);
+  //else if (array_side) smaller_than_me = element + binary_search(left_array,0,array_len-1,right_array[element],array_side,array_len);
 
-  cuPrintf("Element: %d.%lu || How many smaller than me: %lu || Value: %d\n",array_side,element ,smaller_than_me,(array_side) ? right_array[element] : left_array[element]);
+  /* New Code */
+  /* Left Side, so we want to search right array */
+  if (!left_or_right) smaller_than_me = what_element_am_I_in_my_list + binary_search(right_array,0,array_len-1,left_array[what_element_am_I_in_my_list],left_or_right,array_len);
+  /* Right Side, so we want to search left array */
+  else if (left_or_right) smaller_than_me = what_element_am_I_in_my_list + binary_search(left_array,0,array_len-1,right_array[what_element_am_I_in_my_list],left_or_right,array_len);
 
-  arrayC[smaller_than_me] = (array_side) ? right_array[element] : left_array[element];
+  //cuPrintf("Element: %d.%lu || How many smaller than me: %lu || Value: %d\n",array_side,element ,smaller_than_me,(array_side) ? right_array[what_element_am_I_in_my_list] : left_array[what_element_am_I_in_my_list]);
+
+  arrayC[smaller_than_me] = (left_or_right) ? right_array[what_element_am_I_in_my_list] : left_array[what_element_am_I_in_my_list];
 
 }
 
@@ -563,6 +577,15 @@ void initializeArray1D(unsigned int *arr, long unsigned int len, int seed) {
     arr[i] = (rand() % (MAXVAL - MINVAL + 1)) + MINVAL;
   }
   printf("\n");
+}
+
+int compare_lists(data_t *array1, data_t *array2, long int length)
+{
+  for (int i = 0; i < length; i++)
+  {
+    if(array1[i]-array2[i] != 0) return 1;
+  }
+  return 0;
 }
 
 void printArray(data_t *array, int rowlen)
