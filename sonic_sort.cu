@@ -23,11 +23,11 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 }
 //16777216
 //#define BIG_SERIAL_INT              4096
-#define NUM_THREADS_PER_SORT        2
-
-#define SM_ARR_LEN                  64
+#define NUM_THREADS_PER_SORT        4
+#define BLOCKS                      4/* Has to be at least NUM_THREADS_PER_SORT */
+#define SM_ARR_LEN                  128
 #define THREADS_PER_BLOCK_MERGE     32
-#define BLOCKS                      2 /* Has to be at least NUM_THREADS_PER_SORT */
+
 
 #define PRINT_TIME                  1
 
@@ -213,15 +213,17 @@ int main(int argc, char **argv){
 #endif
       /* https://forums.developer.nvidia.com/t/size-limitation-for-1d-arrays-in-cuda/31066 */
 
-  unsigned int num_elem_per_thread = arrLen/NUM_THREADS_PER_SORT;
+  unsigned int num_elem_per_sublist = arrLen/NUM_THREADS_PER_SORT;
   
-  sonic_sort<<<1, NUM_THREADS_PER_SORT>>>(d_arrayA, d_arrayB, arrLen, num_elem_per_thread); //4
+  sonic_sort<<<1, NUM_THREADS_PER_SORT>>>(d_arrayA, d_arrayB, arrLen, num_elem_per_sublist); //4
 
   int i,j, k;
 
   unsigned int half_array_length = arrLen >> 1; //32 / 2 = 16
 
   unsigned int num_inner_loops = NUM_THREADS_PER_SORT >> 1;
+  
+  unsigned int total_merges = 0;
   
   //for ( i = log2((float)NUM_THREADS_PER_SORT); i > 0; i >>= 1)
   for ( i = 1; i < NUM_THREADS_PER_SORT ; i <<= 1)
@@ -232,16 +234,32 @@ int main(int argc, char **argv){
       for ( j = 0, k = 0; k < num_inner_loops; j = j + (2*i),k++)
       {
           //mega_merge<<<dimGrid, dimBlock >>>(d_arrayA+(j*(half_array_length/i)), d_arrayA+((j+1)*(half_array_length/i)), d_arrayC+(j*(half_array_length/i)),half_array_length/i);
-          mega_merge<<<dimGrid, dimBlock>>>(d_arrayA+j, d_arrayA+(j+i*num_elem_per_thread), d_arrayC+j,num_elem_per_thread);
+          printf("\ni: %u -> j: %u\n",i,j);
+          mega_merge<<<dimGrid, dimBlock>>>(d_arrayA+j*num_elem_per_sublist, d_arrayA+(j*num_elem_per_sublist+i*THREADS_PER_BLOCK_MERGE), d_arrayC+j*num_elem_per_sublist,num_elem_per_sublist);
+            
+          CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, allocSize, cudaMemcpyDeviceToHost));
+          printf("Cuda Array (arrayC): \n");
+          printArray(h_arrayC,SM_ARR_LEN);
+          printf ("\n");
+          
           cudaDeviceSynchronize(); 
+          total_merges++;
 
       }
       num_inner_loops >>= 1;
-      num_elem_per_thread <<= 1;
+      num_elem_per_sublist <<= 1;
       temp = d_arrayA;
-      d_arrayA = d_arrayC;
+      d_arrayA = d_arrayC; 
       d_arrayC = temp;
+                
+                
+      CUDA_SAFE_CALL(cudaMemcpy(h_arrayA, d_arrayA, allocSize, cudaMemcpyDeviceToHost));
+      printf("Cuda Array (arrayA): \n");
+      printArray(h_arrayA,SM_ARR_LEN); 
+      printf ("\n\n");
   }
+  
+  printf("total merges: %u\n", total_merges); 
 
 
 #if PRINT_TIME
