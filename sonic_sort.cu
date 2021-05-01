@@ -23,10 +23,11 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 }
 //16777216
 //#define BIG_SERIAL_INT              4096
-#define NUM_THREADS_PER_SORT        2
-#define BLOCKS                      2/* Has to be at least NUM_THREADS_PER_SORT */
-#define SM_ARR_LEN                  1024
-#define THREADS_PER_BLOCK_MERGE     512
+#define NUM_THREADS_PER_SORT        1024
+#define THREADS_PER_BLOCK_MERGE     1024
+#define BLOCKS                      NUM_THREADS_PER_SORT/* Has to be at least NUM_THREADS_PER_SORT */
+#define SM_ARR_LEN                  NUM_THREADS_PER_SORT*THREADS_PER_BLOCK_MERGE
+
 
 
 #define PRINT_TIME                  1
@@ -109,7 +110,7 @@ int main(int argc, char **argv){
 
 
   // GPU Timing variables
-  cudaEvent_t start, stop;
+  cudaEvent_t start_radix, stop_radix,start_merge,stop_merge;
   float elapsed_gpu;
 
   // Arrays on GPU global memory
@@ -203,16 +204,26 @@ int main(int argc, char **argv){
 
 #if PRINT_TIME
   // Create the cuda events
-  cudaEventCreate(&start);
-  cudaEventCreate(&stop);
+  cudaEventCreate(&start_radix);
+  cudaEventCreate(&stop_radix);
+  
+  cudaEventCreate(&start_merge);
+  cudaEventCreate(&stop_merge);
   // Record event on the default stream
-  cudaEventRecord(start, 0);
+  cudaEventRecord(start_radix, 0);
 #endif
       /* https://forums.developer.nvidia.com/t/size-limitation-for-1d-arrays-in-cuda/31066 */
 
   unsigned int num_elem_per_sublist = arrLen/NUM_THREADS_PER_SORT;
   
   sonic_sort<<<1, NUM_THREADS_PER_SORT>>>(d_arrayA, d_arrayB, arrLen, num_elem_per_sublist); //4
+
+  cudaEventRecord(stop_radix,0);
+  cudaEventSynchronize(stop_radix);
+  cudaEventElapsedTime(&elapsed_gpu, start_radix, stop_radix);
+  printf("\nGPU time RADIX: %f (msec)\n", elapsed_gpu);
+  cudaEventDestroy(start_radix);
+  cudaEventDestroy(stop_radix);
 
   int i,j, k;
 
@@ -221,7 +232,7 @@ int main(int argc, char **argv){
   unsigned int num_inner_loops = NUM_THREADS_PER_SORT >> 1;
   
   unsigned int total_merges = 0;
-  
+  cudaEventRecord(start_merge, 0); 
   //for ( i = log2((float)NUM_THREADS_PER_SORT); i > 0; i >>= 1)
   for ( i = 1; i < NUM_THREADS_PER_SORT ; i <<= 1)
   {
@@ -257,18 +268,21 @@ int main(int argc, char **argv){
       printf ("\n\n"); */
   }
   
-  printf("total merges: %u\n", total_merges); 
+  //printf("total merges: %u\n", total_merges); 
 
 
 #if PRINT_TIME
-  /* Stop and destroy the timer */
-  cudaEventRecord(stop,0);
-  cudaEventSynchronize(stop);
-  cudaEventElapsedTime(&elapsed_gpu, start, stop);
-  printf("\nGPU time: %f (msec)\n", elapsed_gpu);
-  cudaEventDestroy(start);
-  cudaEventDestroy(stop);
+
+  //Stop and destroy the timer
+  cudaEventRecord(stop_merge,0);
+  cudaEventSynchronize(stop_merge);
+  cudaEventElapsedTime(&elapsed_gpu, start_merge, stop_merge);
+  printf("\nGPU time MERGE: %f (msec)\n", elapsed_gpu);
+  cudaEventDestroy(start_merge);
+  cudaEventDestroy(stop_merge);
+
 #endif
+
 
   cudaPrintfDisplay(stdout, true);
   printf("\t... done\n\n");
@@ -459,17 +473,17 @@ __global__ void mega_merge(data_t *left_array, data_t *right_array, data_t *arra
   /* Left Side, so we want to search right array */
   if (!left_or_right)
   {
-      if (tx < THREADS_PER_BLOCK_MERGE) local_array[tx] = right_array[tx];
-      __syncthreads();
-      smaller_than_me = what_element_am_I_in_my_list + binary_search(local_array,0,array_len-1,left_array[what_element_am_I_in_my_list],left_or_right,array_len);
+      //if (tx < THREADS_PER_BLOCK_MERGE) local_array[tx] = right_array[tx];
+      //__syncthreads();
+      smaller_than_me = what_element_am_I_in_my_list + binary_search(right_array,0,array_len-1,left_array[what_element_am_I_in_my_list],left_or_right,array_len);
       
   }
   /* Right Side, so we want to search left array */
   else if (left_or_right)
   {
-      if (tx < THREADS_PER_BLOCK_MERGE) local_array[tx] = left_array[tx];
-      __syncthreads();
-      smaller_than_me = what_element_am_I_in_my_list + binary_search(local_array,0,array_len-1,right_array[what_element_am_I_in_my_list],left_or_right,array_len);
+      //if (tx < THREADS_PER_BLOCK_MERGE) local_array[tx] = left_array[tx];
+      //__syncthreads();
+      smaller_than_me = what_element_am_I_in_my_list + binary_search(left_array,0,array_len-1,right_array[what_element_am_I_in_my_list],left_or_right,array_len);
   }
 
   arrayC[smaller_than_me] = (left_or_right) ? right_array[what_element_am_I_in_my_list] : left_array[what_element_am_I_in_my_list];
