@@ -1,5 +1,5 @@
 /*
-nvcc -arch sm_35 sonic_sort.cu -o sonic_sort
+nvcc -arch sm_35 sonic_sort.cu -o -g -G sonic_sort
 module load cuda
 */
 #include "cuPrintf.cu"
@@ -23,10 +23,10 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true)
 }
 //16777216
 //#define BIG_SERIAL_INT              4096
-#define NUM_THREADS_PER_SORT        1024
-#define THREADS_PER_BLOCK_MERGE     1024
+#define NUM_THREADS_PER_SORT        16384
+#define THREADS_PER_BLOCK_MERGE     32
 #define BLOCKS                      NUM_THREADS_PER_SORT/* Has to be at least NUM_THREADS_PER_SORT */
-#define SM_ARR_LEN                  NUM_THREADS_PER_SORT*THREADS_PER_BLOCK_MERGE
+#define SM_ARR_LEN                  BLOCKS*THREADS_PER_BLOCK_MERGE
 
 
 
@@ -106,7 +106,7 @@ int main(int argc, char **argv){
     arrLen = (SM_ARR_LEN);
   }
 
-  //cudaPrintfInit();
+  cudaPrintfInit();
 
 
   // GPU Timing variables
@@ -158,9 +158,9 @@ int main(int argc, char **argv){
   //printArray(h_arrayA,SM_ARR_LEN);
   //printf ("\n");
 
-  printf("arraySerial: ");
+  //printf("arraySerial: ");
   //printArray(h_arraySerial,SM_ARR_LEN);
-  printf ("\n");
+  //printf ("\n");
   /*
   printf("arrayB: ");
   printArray(h_arrayB,SM_ARR_LEN);
@@ -170,11 +170,12 @@ int main(int argc, char **argv){
   */
   //radixsort(h_arrayA, SM_ARR_LEN);
   //radixsort(h_arrayB, SM_ARR_LEN);
- /*
-  printf("arrayA: ");
-  printArray(h_arrayA,SM_ARR_LEN);
-  printf ("\n");
-
+ 
+  //printf("before sorting arrayA: ");
+  //printArray(h_arrayA,SM_ARR_LEN);
+  //printf ("\n");
+  
+  /*
   printf("arrayB: ");
   printArray(h_arrayB,SM_ARR_LEN);
   printf ("\n");
@@ -216,7 +217,7 @@ int main(int argc, char **argv){
 
   unsigned int num_elem_per_sublist = arrLen/NUM_THREADS_PER_SORT;
   
-  sonic_sort<<<1, NUM_THREADS_PER_SORT>>>(d_arrayA, d_arrayB, arrLen, num_elem_per_sublist); //4
+  sonic_sort<<<BLOCKS, THREADS_PER_BLOCK_MERGE>>>(d_arrayA, d_arrayB, arrLen, THREADS_PER_BLOCK_MERGE); //4
 
   cudaEventRecord(stop_radix,0);
   cudaEventSynchronize(stop_radix);
@@ -232,18 +233,18 @@ int main(int argc, char **argv){
   unsigned int num_inner_loops = NUM_THREADS_PER_SORT >> 1;
   
   unsigned int total_merges = 0;
-  cudaEventRecord(start_merge, 0); 
+  //cudaEventRecord(start_merge, 0); 
   //for ( i = log2((float)NUM_THREADS_PER_SORT); i > 0; i >>= 1)
-  for ( i = 1; i < NUM_THREADS_PER_SORT ; i <<= 1)
-  {
+  //for ( i = 1; i < NUM_THREADS_PER_SORT ; i <<= 1)
+  //{
       
       
       //for ( j = 0; j <= i; j += 2)
-      for ( j = 0, k = 0; k < num_inner_loops; j = j + (2),k++)
-      {
+      //for ( j = 0, k = 0; k < num_inner_loops; j = j + (2),k++)
+      //{
           //mega_merge<<<dimGrid, dimBlock >>>(d_arrayA+(j*(half_array_length/i)), d_arrayA+((j+1)*(half_array_length/i)), d_arrayC+(j*(half_array_length/i)),half_array_length/i);
           //printf("\ni: %u -> j: %u\n",i,j);
-          mega_merge<<<dimGrid, dimBlock>>>(d_arrayA+j*num_elem_per_sublist, d_arrayA+(j*num_elem_per_sublist+i*THREADS_PER_BLOCK_MERGE), d_arrayC+j*num_elem_per_sublist,i*THREADS_PER_BLOCK_MERGE);
+        //  mega_merge<<<dimGrid, dimBlock>>>(d_arrayA+j*num_elem_per_sublist, d_arrayA+(j*num_elem_per_sublist+i*THREADS_PER_BLOCK_MERGE), d_arrayC+j*num_elem_per_sublist,i*THREADS_PER_BLOCK_MERGE);
           
           /*  
           CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, allocSize, cudaMemcpyDeviceToHost));
@@ -254,25 +255,51 @@ int main(int argc, char **argv){
           //cudaDeviceSynchronize(); 
           //total_merges++;
 
-      }
-      num_inner_loops >>= 1;
-      num_elem_per_sublist <<= 1;
-      temp = d_arrayA;
-      d_arrayA = d_arrayC; 
-      d_arrayC = temp;
+      //}
+      //num_inner_loops >>= 1;
+      //num_elem_per_sublist <<= 1;
+      //temp = d_arrayA;
+      //d_arrayA = d_arrayC; 
+      //d_arrayC = temp;
                 
-      /*        
+            
       CUDA_SAFE_CALL(cudaMemcpy(h_arrayA, d_arrayA, allocSize, cudaMemcpyDeviceToHost));
-      printf("Cuda Array (arrayA): \n");
-      printArray(h_arrayA,SM_ARR_LEN); 
-      printf ("\n\n"); */
-  }
+      
+      
+      //printf("Cuda Array (arrayA) after sorting: \n");
+      //printArray(h_arrayA,SM_ARR_LEN); 
+      //printf ("\n\n"); 
+      
+      
+      
+      //merge_adjacent_arrays(unsigned int *leftSubArray, unsigned int *rightSubArray, const unsigned int sizeLeft, const unsigned int sizeRight)
+  wakeup_delay();
+  printf("Host Launch\n");
+  double merge_time_stamp;
+  clock_gettime(CLOCK_REALTIME, &time_start);
+        
+      unsigned int left_array_size = num_elem_per_sublist;
+      
+      for (i = num_elem_per_sublist; i < SM_ARR_LEN; i += num_elem_per_sublist )
+      {
+          merge_adjacent_arrays(h_arrayA, h_arrayA + left_array_size, left_array_size, num_elem_per_sublist);
+          
+          left_array_size += num_elem_per_sublist;
+      }
+      
+  clock_gettime(CLOCK_REALTIME, &time_stop);
+  merge_time_stamp = interval(time_start, time_stop);
+  printf("CPU Merge Time: %.6f (msec)\n",1000*merge_time_stamp);
+
+      
+  //}
   
   //printf("total merges: %u\n", total_merges); 
 
 
 #if PRINT_TIME
 
+  /*
   //Stop and destroy the timer
   cudaEventRecord(stop_merge,0);
   cudaEventSynchronize(stop_merge);
@@ -280,6 +307,7 @@ int main(int argc, char **argv){
   printf("\nGPU time MERGE: %f (msec)\n", elapsed_gpu);
   cudaEventDestroy(start_merge);
   cudaEventDestroy(stop_merge);
+  */
 
 #endif
 
@@ -291,14 +319,16 @@ int main(int argc, char **argv){
   CUDA_SAFE_CALL(cudaPeekAtLastError());
 
   // Transfer the results back to the host
-  CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, allocSize, cudaMemcpyDeviceToHost));
+  //CUDA_SAFE_CALL(cudaMemcpy(h_arrayC, d_arrayC, allocSize, cudaMemcpyDeviceToHost));
 
-  CUDA_SAFE_CALL(cudaMemcpy(h_arrayA, d_arrayA, allocSize, cudaMemcpyDeviceToHost));
+  //CUDA_SAFE_CALL(cudaMemcpy(h_arrayA, d_arrayA, allocSize, cudaMemcpyDeviceToHost));
 //HOST SOR. Use copied SOR function here.
 
-  //printf("Cuda Array (arrayA): \n");
+  
+  //printf("Cuda Array (arrayA) after merging: \n");
   //printArray(h_arrayA,SM_ARR_LEN);
   //printf ("\n");
+  
 
 /* Serial Land */
 
@@ -316,9 +346,11 @@ int main(int argc, char **argv){
 
   printf("CPU Time: %.6f (msec)\n",1000*time_stamp);
 
+  
   //printf("Cuda Array (arraySerial): \n");
   //printArray(h_arraySerial,SM_ARR_LEN);
   //printf ("\n");
+  
 
   if (compare_lists(h_arraySerial,h_arrayA,SM_ARR_LEN) != 0) printf("List comparision failed!\n");
   else printf("Lists are the same!\n");
@@ -364,30 +396,47 @@ printf("Compare\n");
 
 __global__ void sonic_sort(data_t *input_array, data_t *array_b, data_t arr_len, data_t num_elements_per_thread)
 {
-    //int bx = blockIdx.x; /* Can we use this block as a way to work on different sections? */
+    int bx = blockIdx.x; /* Can we use this block as a way to work on different sections? */
     int tx = threadIdx.x;
 
 
 
-    int thread_starting_point = tx*num_elements_per_thread;
-    int thread_end_point = thread_starting_point + num_elements_per_thread;
+    //int thread_starting_point = tx*num_elements_per_thread;
+    //int thread_end_point = thread_starting_point + num_elements_per_thread;
+    
+    int block_starting_point = bx*THREADS_PER_BLOCK_MERGE;
+    int block_end_point = block_starting_point + THREADS_PER_BLOCK_MERGE;
+    
     int shift, s, i, index;
     unsigned int *tmp;
 
 
     /* base case: if array is empty or its one element then it is sorted. */
-    if (num_elements_per_thread <= 1) return;
+    //if (num_elements_per_thread <= 1) return;
 
     /* create the output array for count sort */
     //unsigned int *array_b= (unsigned int *) malloc(arr_len*sizeof(unsigned int));
 
 
    /* initialize array that counts within counting sort*/
-    int *count= (int*) malloc(256*sizeof(unsigned int));
+    //int *count= (int*) malloc(256*sizeof(unsigned int));
+    __shared__ int count[256];
 
+
+    
+    __shared__ unsigned int local_array_a[THREADS_PER_BLOCK_MERGE];
+    __shared__ unsigned int local_array_b[THREADS_PER_BLOCK_MERGE];
+    
+    local_array_a[tx] = input_array[block_starting_point + tx];
+    //__syncthreads();
+    
+    unsigned int *local_array_a_ptr = local_array_a;
+    unsigned int *local_array_b_ptr = local_array_b;
+    
     /* this will allow us to know if we did even number of swaps
      between input_array pointer and output pointer */
-    unsigned int* original_array = input_array;
+    //unsigned int* original_array = input_array;        
+    unsigned int* original_array = local_array_a_ptr;
 
     /* if the radix is 256 (total numbers in a 1 byte), then sorting 32-bit numbers will take 4 iteration */
     for (shift = 0, s = 0; shift < 4; shift++, s+=8)
@@ -399,10 +448,18 @@ __global__ void sonic_sort(data_t *input_array, data_t *array_b, data_t arr_len,
         }
 
         /* counting occurances of a number and incrementing elements in count array */
-        for (i = thread_starting_point; i < thread_end_point; i++)
+        //for (i = thread_starting_point; i < thread_end_point; i++)
+        //for (i = block_starting_point; i < block_end_point; i++)
+        for (i = 0; i < THREADS_PER_BLOCK_MERGE; i++)
         {
             /* access element input, shift right 's' times, then do bit-wise and with value 255 */
-            count[(input_array[i] >> s) &0xff]++;
+            //count[(input_array[i] >> s) &0xff]++;
+            count[(local_array_a_ptr[i] >> s) &0xff]++;
+            //count[(local_array_a_ptr[tx] >> s) &0xff]++;
+            
+            
+            
+            //cuPrintf("local_array_a_ptr[%d] = %u -> count[%d]: %d\n",i, local_array_a_ptr[i] ,(local_array_a_ptr[i] >> s) &0xff,count[(local_array_a_ptr[i] >> s) &0xff]); 
         }
 
         /* do prefix sum so that count[i] indicates where a digit belongs in the output array. */
@@ -412,35 +469,60 @@ __global__ void sonic_sort(data_t *input_array, data_t *array_b, data_t arr_len,
         }
 
         /* build the output array */
-        for (i = thread_end_point-1; i >= thread_starting_point; i--)
+        //for (i = thread_end_point-1; i >= thread_starting_point; i--)
+        //for (i = block_end_point-1; i >= block_starting_point; i--)
+        for (i = THREADS_PER_BLOCK_MERGE-1; i >= 0; i--)
         {
-            index = (input_array[i] >> s) &0xff;
+            //index = (input_array[i] >> s) &0xff;
+            index = (local_array_a_ptr[i] >> s) &0xff;
 
             /* decrement element within count array to figure out input_array[i]'s place in output array */
-            array_b[thread_starting_point + (--count[index])] = input_array[i];
-        }
+            //array_b[thread_starting_point + (--count[index])] = input_array[i];
+            //array_b[block_starting_point + (--count[index])] = input_array[i];
+            local_array_b_ptr[(--count[index])] = local_array_a_ptr[i];
+        } 
 
         /* input array is now sorted according to current digit.
            swap input_array's and array_b's pointers to simulate copying data
            from one array to other.
         */
+        
+        /*
        tmp = input_array;
        input_array = array_b;
        array_b = tmp;
+        */
+       
+       tmp = local_array_a_ptr;
+       local_array_a_ptr = local_array_b_ptr;
+       local_array_b_ptr = tmp;
+       
     }
 
     /* if odd number of swaps happened with the pointers,
         then copy over data once more before finishing
     */
-   if (original_array == array_b)
+    //if (original_array == array_b)
+   if (original_array == local_array_b_ptr)
    {
+       /*
        tmp = input_array;
        input_array = array_b;
-       array_b = tmp;
+       array_b = tmp;       
+       */
+       
+       
+       tmp = local_array_a_ptr;
+       local_array_a_ptr = local_array_b_ptr;
+       local_array_b_ptr = tmp;
+       
    }
+   
+   input_array[block_starting_point + tx] = local_array_a[tx];
+   //__syncthreads();
 
-   free(array_b);
-   free(count);
+   //free(array_b);
+   //free(count);
 }
 
 __global__ void mega_merge(data_t *left_array, data_t *right_array, data_t *arrayC, long int array_len)
